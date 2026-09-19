@@ -87,6 +87,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The art is generated from code and committed. If the generator changes and
+      # nobody regenerates, the README shows something the source no longer produces.
+      - name: Committed artwork matches the generator
+        run: |
+          set -euo pipefail
+          before=$(sha256sum assets/logo.png assets/logo.svg assets/banner.png)
+          python assets/generate_art.py > /dev/null
+          if ! echo "$before" | sha256sum --check --status; then
+            echo "::error file=assets/generate_art.py::Committed artwork is stale. Run: python3 assets/generate_art.py"
+            exit 1
+          fi
+          echo "artwork is up to date"
+
       - name: Test cost-audit finding logic
         run: |
           python -m pip install --quiet boto3
