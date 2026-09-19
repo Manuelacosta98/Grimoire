@@ -1,0 +1,53 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "grimoire",
+  "metadata": {
+    "description": "A spellbook of AI skills for Claude Code \u2014 engineering docs and AWS cost auditing.",
+    "version": "0.2.0",
+    "pluginRoot": "./plugins"
+  },
+  "owner": {
+    "name": "Manuel Acosta"
+  },
+  "plugins": [
+    {
+      "name": "engineering-docs",
+      "source": "./plugins/engineering-docs",
+      "description": "Write the engineering documents nobody wants to start from a blank page \u2014 product requirements docs, blameless root cause analyses, and operational runbooks. Each skill interviews you for what is missing, mines the repo and git history for what it can answer itself, and writes a finished Markdown document.",
+      "version": "0.1.0",
+      "keywords": [
+        "prd",
+        "rca",
+        "runbook",
+        "documentation",
+        "postmortem",
+        "product",
+        "incident",
+        "technical-writing"
+      ],
+      "category": "development"
+    },
+    {
+      "name": "aws-cost-audit",
+      "source": "./plugins/aws-cost-audit",
+      "description": "Audit an AWS account for wasted spend. Pulls Cost Explorer trends, sweeps for idle and orphaned resources, analyzes S3 storage footprint, and writes a report ranking findings by estimated monthly savings with the evidence and remediation command for each. Ships a least-privilege IAM role and a preflight permission check. Every AWS call is read-only.",
+      "version": "0.2.0",
+      "keywords": [
+        "audit",
+        "aws",
+        "cloudformation",
+        "cost",
+        "cost-explorer",
+        "ebs",
+        "ec2",
+        "finops",
+        "iam",
+        "least-privilege",
+        "optimization",
+        "s3",
+        "savings"
+      ],
+      "category": "infrastructure"
+    }
+  ]
+}

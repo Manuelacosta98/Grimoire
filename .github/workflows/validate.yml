@@ -1,0 +1,93 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Validate marketplace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      # The official validator does not recurse, so each path is checked on its own.
+      - name: Validate manifests and components
+        run: |
+          set -euo pipefail
+          claude plugin validate . --strict
+          for plugin in plugins/*/; do
+            claude plugin validate "$plugin" --strict
+            if [ -d "${plugin}skills" ]; then
+              claude plugin validate "${plugin}skills" --strict
+            fi
+          done
+
+      # Not something a general validator can know: the aws-cost-audit plugin promises
+      # in its README that every AWS call is read-only. This keeps that true.
+      - name: Cost-audit scripts must stay read-only
+        run: |
+          if grep -rnE '\.[[:space:]]*(create|delete|put|modify|terminate|update|attach|detach|remove|revoke|associate|disassociate|reboot|restore|copy|import|register|deregister|tag|untag)_[a-z0-9_]+[[:space:]]*\(' plugins/aws-cost-audit/scripts/; then
+            echo "::error::Mutating AWS call found. This plugin is read-only by construction."
+            exit 1
+          fi
+
+      # A skill that points at a file which no longer exists fails silently at runtime.
+      - name: Skill file references must resolve
+        run: |
+          missing=0
+          for skill in plugins/*/skills/*/SKILL.md; do
+            root="${skill%%/skills/*}"
+            for ref in $(grep -oE '\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+' "$skill" \
+                         | sed 's|${CLAUDE_PLUGIN_ROOT}/||' | sort -u); do
+              if [ ! -e "$root/$ref" ]; then
+                echo "::error file=$skill::references \${CLAUDE_PLUGIN_ROOT}/$ref which does not exist"
+                missing=1
+              fi
+            done
+          done
+          exit $missing
+
+      # The scripts name every IAM action they call, so the policy and the
+      # CloudFormation template can be checked against the code instead of trusted.
+      # Three sources, one list: drift means the audit silently loses a check.
+      - name: IAM policy must match the actions the code uses
+        run: |
+          set -euo pipefail
+          iam=plugins/aws-cost-audit/iam
+          grep -ohE '"[a-z0-9]+:[A-Z][A-Za-z]+' plugins/aws-cost-audit/scripts/*.py \
+            | tr -d '"' | sort -u > /tmp/from_code.txt
+          jq -r '.Statement[].Action[]' "$iam/cost-audit-policy.json" \
+            | sort -u > /tmp/from_policy.txt
+          grep -oE '^[[:space:]]*-[[:space:]]+[a-z0-9]+:[A-Z][A-Za-z]+$' "$iam/cost-audit-role.yaml" \
+            | sed 's/^[[:space:]]*-[[:space:]]*//' | sort -u > /tmp/from_template.txt
+
+          status=0
+          if ! diff -u /tmp/from_code.txt /tmp/from_policy.txt; then
+            echo "::error file=$iam/cost-audit-policy.json::Policy does not match the IAM actions named in scripts/"
+            status=1
+          fi
+          if ! diff -u /tmp/from_policy.txt /tmp/from_template.txt; then
+            echo "::error file=$iam/cost-audit-role.yaml::Template does not match cost-audit-policy.json"
+            status=1
+          fi
+          echo "$(wc -l < /tmp/from_code.txt) actions, three sources in agreement"
+          exit $status
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test cost-audit finding logic
+        run: |
+          python -m pip install --quiet boto3
+          python tests/test_cost_audit.py

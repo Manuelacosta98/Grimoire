@@ -1,0 +1,10 @@
+{
+  "name": "engineering-docs",
+  "version": "0.1.0",
+  "description": "Write the engineering documents nobody wants to start from a blank page — product requirements docs, blameless root cause analyses, and operational runbooks. Each skill interviews you for what is missing, mines the repo and git history for what it can answer itself, and writes a finished Markdown document.",
+  "author": {
+    "name": "Manuel Acosta"
+  },
+  "keywords": ["prd", "rca", "runbook", "documentation", "postmortem", "product", "incident", "technical-writing"],
+  "license": "MIT"
+}

@@ -1,0 +1,169 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >-
+  Read-only IAM role and managed policy for the Grimoire aws-cost-audit plugin.
+  Grants exactly the 20 actions the audit scripts call — every one a Get, Describe,
+  or List. Nothing in this template can create, change, tag, or delete a resource.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Who may assume this role
+        Parameters:
+          - TrustedPrincipalArn
+          - ExternalId
+      - Label:
+          default: Naming
+        Parameters:
+          - RoleName
+          - MaxSessionDuration
+    ParameterLabels:
+      TrustedPrincipalArn:
+        default: Trusted principal ARN
+      ExternalId:
+        default: External ID (optional)
+
+Parameters:
+  TrustedPrincipalArn:
+    Type: String
+    Description: >-
+      ARN of the IAM user, role, or account allowed to assume this role. For your own
+      account use arn:aws:iam::ACCOUNT_ID:root, or name a specific user or role to be
+      narrower. For a delegated auditor, use their account or role ARN.
+    AllowedPattern: "^arn:aws[a-z-]*:iam::[0-9]{12}:(root|user/.+|role/.+)$"
+    ConstraintDescription: Must be an IAM user, role, or account root ARN.
+
+  ExternalId:
+    Type: String
+    Default: ""
+    Description: >-
+      Optional external ID required on sts:AssumeRole. Leave blank when the trusted
+      principal is in your own account. Set it when granting access to a third party —
+      it is the documented defence against the confused-deputy problem.
+    NoEcho: true
+
+  RoleName:
+    Type: String
+    Default: GrimoireCostAuditor
+    Description: Name for the created role.
+    AllowedPattern: "^[A-Za-z0-9+=,.@_-]{1,64}$"
+
+  MaxSessionDuration:
+    Type: Number
+    Default: 3600
+    MinValue: 3600
+    MaxValue: 43200
+    Description: Maximum assumed-session length in seconds. An --all-regions sweep of a
+      large account can run long, so raise this if sessions expire mid-audit.
+
+Conditions:
+  HasExternalId: !Not [!Equals [!Ref ExternalId, ""]]
+
+Resources:
+  CostAuditPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${RoleName}Policy"
+      Description: >-
+        Read-only permissions for the Grimoire aws-cost-audit plugin. Attach to the
+        role this stack creates, or to an existing user or group directly.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CostExplorerRead
+            Effect: Allow
+            # Cost Explorer is a global service; its endpoint lives in us-east-1.
+            # Each request is billed at roughly USD 0.01.
+            Action:
+              - ce:GetCostAndUsage
+              - ce:GetReservationPurchaseRecommendation
+              - ce:GetRightsizingRecommendation
+              - ce:GetSavingsPlansPurchaseRecommendation
+            Resource: "*"
+
+          - Sid: ComputeAndStorageInventory
+            Effect: Allow
+            # Describe calls do not support resource-level conditions, so "*" here is
+            # the narrowest grant AWS permits for these actions.
+            Action:
+              - ec2:DescribeAddresses
+              - ec2:DescribeInstances
+              - ec2:DescribeNatGateways
+              - ec2:DescribeRegions
+              - ec2:DescribeSnapshots
+              - ec2:DescribeVolumes
+              - elbv2:DescribeLoadBalancers
+              - elbv2:DescribeTargetGroups
+              - elbv2:DescribeTargetHealth
+              - rds:DescribeDBInstances
+            Resource: "*"
+
+          - Sid: BucketConfigurationRead
+            Effect: Allow
+            # Configuration only. This grants no access to object contents: s3:GetObject
+            # and s3:ListBucket are deliberately absent, so the audit can size and
+            # inspect buckets without being able to read what is in them.
+            Action:
+              - s3:GetBucketLifecycleConfiguration
+              - s3:GetBucketLocation
+              - s3:GetBucketVersioning
+              - s3:ListAllMyBuckets
+            Resource: "*"
+
+          - Sid: MetricsAndIdentity
+            Effect: Allow
+            Action:
+              - cloudwatch:GetMetricStatistics
+              - sts:GetCallerIdentity
+            Resource: "*"
+
+  CostAuditRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      Description: Read-only cost auditing for the Grimoire aws-cost-audit plugin.
+      MaxSessionDuration: !Ref MaxSessionDuration
+      ManagedPolicyArns:
+        - !Ref CostAuditPolicy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref TrustedPrincipalArn
+            Action: sts:AssumeRole
+            Condition: !If
+              - HasExternalId
+              - StringEquals:
+                  sts:ExternalId: !Ref ExternalId
+              - !Ref AWS::NoValue
+      Tags:
+        - Key: ManagedBy
+          Value: grimoire-aws-cost-audit
+        - Key: AccessLevel
+          Value: read-only
+
+Outputs:
+  RoleArn:
+    Description: Assume this role to run the audit.
+    Value: !GetAtt CostAuditRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-RoleArn"
+
+  PolicyArn:
+    Description: >-
+      Attach this managed policy directly to an existing user or group if you would
+      rather not assume a role.
+    Value: !Ref CostAuditPolicy
+    Export:
+      Name: !Sub "${AWS::StackName}-PolicyArn"
+
+  ProfileSnippet:
+    Description: >-
+      Add this to ~/.aws/config, then run the audit with --profile cost-audit.
+    Value: !Sub |
+      [profile cost-audit]
+      role_arn = ${CostAuditRole.Arn}
+      source_profile = YOUR_SOURCE_PROFILE
+      region = us-east-1
