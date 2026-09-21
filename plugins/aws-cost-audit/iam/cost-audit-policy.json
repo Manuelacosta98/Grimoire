@@ -30,6 +30,44 @@
       "Resource": "*"
     },
     {
+      "Sid": "GlueInventoryRead",
+      "Effect": "Allow",
+      "Action": [
+        "glue:GetJobRuns",
+        "glue:GetJobs",
+        "glue:GetTrigger",
+        "glue:ListTriggers"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SageMakerAndDataZoneRead",
+      "Effect": "Allow",
+      "Action": [
+        "datazone:ListDomains",
+        "datazone:ListProjects",
+        "datazone:SearchUserProfiles",
+        "sagemaker:ListDomains",
+        "sagemaker:ListSpaces",
+        "sagemaker:ListUserProfiles"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "TrailAndLogsRead",
+      "Effect": "Allow",
+      "Action": [
+        "cloudtrail:DescribeTrails",
+        "cloudtrail:ListEventDataStores",
+        "cloudtrail:LookupEvents",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:GetQueryResults",
+        "logs:StartQuery"
+      ],
+      "Resource": "*"
+    },
+    {
       "Sid": "BucketConfigurationRead",
       "Effect": "Allow",
       "Action": [
@@ -39,6 +77,22 @@
         "s3:ListAllMyBuckets"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "ObjectReadForDeepDives",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::amazon-sagemaker-*",
+        "arn:aws:s3:::amazon-sagemaker-*/*",
+        "arn:aws:s3:::amazon-datazone-*",
+        "arn:aws:s3:::amazon-datazone-*/*",
+        "arn:aws:s3:::aws-cloudtrail-logs-*",
+        "arn:aws:s3:::aws-cloudtrail-logs-*/*"
+      ]
     },
     {
       "Sid": "MetricsAndIdentity",

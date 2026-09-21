@@ -106,10 +106,19 @@ Clearing only one of the two does nothing.
 ## The read-only rule
 
 **`plugins/aws-cost-audit/scripts/` must never call a mutating AWS operation.** Only
-`get_*`, `describe_*`, and `list_*`. CI greps for mutating boto3 method calls and fails
-the build if one appears. The pattern requires a leading dot and a trailing `(`, so it
-matches `.delete_volume(` but not the CLI strings in remediation messages
-(`"aws ec2 delete-volume --volume-id"`) or identifiers like `output_file`.
+`get_*`, `describe_*`, `list_*`, `lookup_*`, and `search_*`. CI greps for mutating boto3
+method calls and fails the build if one appears. The pattern requires a leading dot and a
+trailing `(`, so it matches `.delete_volume(` but not the CLI strings in remediation
+messages (`"aws ec2 delete-volume --volume-id"`) or identifiers like `output_file`.
+
+**The same rule applies to the `aws` CLI, and needs its own guard.** `glue_cost_report.py`
+and `sagemaker_cost_deepdive.py` reach AWS by shelling out, where a mutating call is a
+plain string — `["glue", "delete-job"]` — that a grep for boto3 method names cannot see.
+A second CI step greps for quoted CLI operations beginning with a mutating verb. Two
+read operations deliberately fall outside its verb list: `select-object-content`, which
+the trail-archive scan uses, and `start-query`, which starts a Logs Insights query. If
+either ever appears as a CLI string, argue for it rather than widening the allowlist
+quietly.
 
 This is a promise made in the README and in the skill, to people who will point this at
 production accounts. The report tells the user what to delete; the user does the deleting.
@@ -128,18 +137,29 @@ The reasons, in order of how much they matter:
   hands out short-lived credentials that stop working on their own.
 - **An IAM user usually carries far more rights than this audit needs.** Running a
   read-only audit as a principal that can also delete production is an unnecessary
-  blast radius. The role in `plugins/aws-cost-audit/iam/` grants exactly 20 read-only
-  actions and nothing else.
+  blast radius. The role in `plugins/aws-cost-audit/iam/` grants exactly the 39 read-only
+  actions the scripts call and nothing else.
 - **A role is auditable and revocable.** You can see who assumed it and when, and cut
   access by changing one trust policy instead of rotating keys everywhere.
 
 The plugin ships what is needed for this:
 
-- `iam/cost-audit-policy.json` — the 20 actions, nothing more.
+- `iam/cost-audit-policy.json` — the 39 actions, nothing more.
 - `iam/cost-audit-role.yaml` — CloudFormation creating a role with that policy, with an
   optional `ExternalId` for third-party access.
 - `scripts/preflight.py` — reports which actions the current credentials hold, and
-  **flags when the caller is an IAM user or root rather than an assumed role**.
+  **flags when the caller is an IAM user or root rather than an assumed role**. Probes
+  aim at names that do not exist (`grimoire-preflight-probe`), so "no such job" proves
+  the call was authorised and costs nothing.
+
+**Every action the role grants must be named as a string literal in a script.** CI diffs
+three sources — the `"service:Action"` literals in `scripts/*.py`, `iam/cost-audit-policy.json`,
+and `iam/cost-audit-role.yaml` — and requires them to be the same set. A script that
+reaches AWS through the CLI therefore carries a `REQUIRED_ACTIONS` list naming what it
+calls; without one, adding its actions to the policy fails the build. Derive that list
+from the call sites, not from the skill's permission table, which documents more than the
+code uses. Payer-account-only actions stay out of the role and are written in a comment
+without quotes, so the diff does not pick them up.
 
 **If someone already ran the audit with broader credentials**, that is not a crisis and
 the skill should not scold them — the scripts are read-only, so nothing was changed. But
@@ -151,6 +171,25 @@ reasonable precaution.
 
 Keep this advice proportionate. It is a recommendation for a read-only tool, not a
 security incident.
+
+### Example reports must name nobody
+
+The two deep-dive skills each ship `references/example-report.html`: a real dashboard with
+every identifying word — account, job, person, space, bucket, notebook path, table name,
+error message — replaced by a neutral one. Nothing here enforces that; it is a rule, so hold
+to it. Never commit a report that has not had every identifier replaced, and never paste a
+raw dashboard in "just to look at the numbers".
+
+Work name by name rather than by pattern: a name is safe only if every word in it describes
+infrastructure rather than a company, a person, a product or a line of business. That means
+a name built entirely of generic words (`adhoc-snapshot-loader-job`) can stay as it is,
+because it names nobody — the docs say so rather than overclaiming. It also means the
+obvious substitutions are the ones that get missed: a notebook called `glm_churn.ipynb`
+names a model family and a line of business even though neither word is a proper noun.
+
+Free-text error messages are the trap. Cut them back to their exception class rather than
+trying to clean them, because an error string can carry a table name, a SQL fragment, an
+ARN, or a row of the data itself.
 
 Scripts should also:
 

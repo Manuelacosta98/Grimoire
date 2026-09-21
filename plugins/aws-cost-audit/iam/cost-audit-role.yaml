@@ -2,8 +2,9 @@ AWSTemplateFormatVersion: "2010-09-09"
 
 Description: >-
   Read-only IAM role and managed policy for the Grimoire aws-cost-audit plugin.
-  Grants exactly the 20 actions the audit scripts call — every one a Get, Describe,
-  or List. Nothing in this template can create, change, tag, or delete a resource.
+  Grants exactly the 39 actions the audit and deep-dive scripts call — every one a
+  Get, Describe, List, Lookup, or Search. Nothing in this template can create,
+  change, tag, or delete a resource.
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -18,11 +19,17 @@ Metadata:
         Parameters:
           - RoleName
           - MaxSessionDuration
+      - Label:
+          default: Optional object access
+        Parameters:
+          - TrailArchiveBucket
     ParameterLabels:
       TrustedPrincipalArn:
         default: Trusted principal ARN
       ExternalId:
         default: External ID (optional)
+      TrailArchiveBucket:
+        default: CloudTrail archive bucket (optional)
 
 Parameters:
   TrustedPrincipalArn:
@@ -57,8 +64,20 @@ Parameters:
     Description: Maximum assumed-session length in seconds. An --all-regions sweep of a
       large account can run long, so raise this if sessions expire mid-audit.
 
+  TrailArchiveBucket:
+    Type: String
+    Default: ""
+    Description: >-
+      Optional. Name of the S3 bucket holding the CloudTrail archive, granted only if
+      you set it. The Glue deep dive reads it with S3 Select when --archive-bucket is
+      passed, to recover runs older than CloudTrail Event history. Leave blank unless
+      you need windows wider than 90 days, or if your trail bucket already matches the
+      aws-cloudtrail-logs-* naming AWS creates by default.
+    AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+
 Conditions:
   HasExternalId: !Not [!Equals [!Ref ExternalId, ""]]
+  HasTrailArchive: !Not [!Equals [!Ref TrailArchiveBucket, ""]]
 
 Resources:
   CostAuditPolicy:
@@ -99,17 +118,80 @@ Resources:
               - rds:DescribeDBInstances
             Resource: "*"
 
+          - Sid: GlueInventoryRead
+            Effect: Allow
+            # Glue read APIs take no resource-level condition for these operations.
+            Action:
+              - glue:GetJobRuns
+              - glue:GetJobs
+              - glue:GetTrigger
+              - glue:ListTriggers
+            Resource: "*"
+
+          - Sid: SageMakerAndDataZoneRead
+            Effect: Allow
+            # Studio user profiles are DataZone GUIDs; SearchUserProfiles is the only
+            # way to turn them into the human names the dashboard attributes spend to.
+            Action:
+              - datazone:ListDomains
+              - datazone:ListProjects
+              - datazone:SearchUserProfiles
+              - sagemaker:ListDomains
+              - sagemaker:ListSpaces
+              - sagemaker:ListUserProfiles
+            Resource: "*"
+
+          - Sid: TrailAndLogsRead
+            Effect: Allow
+            # LookupEvents reads the management-event history; StartQuery runs Logs
+            # Insights, which bills per GB scanned. Neither can write anything.
+            Action:
+              - cloudtrail:DescribeTrails
+              - cloudtrail:ListEventDataStores
+              - cloudtrail:LookupEvents
+              - logs:DescribeLogGroups
+              - logs:DescribeLogStreams
+              - logs:GetQueryResults
+              - logs:StartQuery
+            Resource: "*"
+
           - Sid: BucketConfigurationRead
             Effect: Allow
-            # Configuration only. This grants no access to object contents: s3:GetObject
-            # and s3:ListBucket are deliberately absent, so the audit can size and
-            # inspect buckets without being able to read what is in them.
+            # Configuration only, and on every bucket. Object contents are granted
+            # separately below, and only for the handful of prefixes the deep dives
+            # actually read — the cost audit itself never opens an object.
             Action:
               - s3:GetBucketLifecycleConfiguration
               - s3:GetBucketLocation
               - s3:GetBucketVersioning
               - s3:ListAllMyBuckets
             Resource: "*"
+
+          - Sid: ObjectReadForDeepDives
+            Effect: Allow
+            # The only grant in this template that reaches object contents, and it is
+            # scoped by name: the Studio notebook mirror the SageMaker deep dive
+            # profiles, and the CloudTrail archive the Glue reconstruction reads with
+            # S3 Select. Nothing else in the account is readable.
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+            Resource: !If
+              - HasTrailArchive
+              - - !Sub "arn:${AWS::Partition}:s3:::amazon-sagemaker-${AWS::AccountId}-*"
+                - !Sub "arn:${AWS::Partition}:s3:::amazon-sagemaker-${AWS::AccountId}-*/*"
+                - !Sub "arn:${AWS::Partition}:s3:::amazon-datazone-${AWS::AccountId}-*"
+                - !Sub "arn:${AWS::Partition}:s3:::amazon-datazone-${AWS::AccountId}-*/*"
+                - !Sub "arn:${AWS::Partition}:s3:::aws-cloudtrail-logs-${AWS::AccountId}-*"
+                - !Sub "arn:${AWS::Partition}:s3:::aws-cloudtrail-logs-${AWS::AccountId}-*/*"
+                - !Sub "arn:${AWS::Partition}:s3:::${TrailArchiveBucket}"
+                - !Sub "arn:${AWS::Partition}:s3:::${TrailArchiveBucket}/*"
+              - - !Sub "arn:${AWS::Partition}:s3:::amazon-sagemaker-${AWS::AccountId}-*"
+                - !Sub "arn:${AWS::Partition}:s3:::amazon-sagemaker-${AWS::AccountId}-*/*"
+                - !Sub "arn:${AWS::Partition}:s3:::amazon-datazone-${AWS::AccountId}-*"
+                - !Sub "arn:${AWS::Partition}:s3:::amazon-datazone-${AWS::AccountId}-*/*"
+                - !Sub "arn:${AWS::Partition}:s3:::aws-cloudtrail-logs-${AWS::AccountId}-*"
+                - !Sub "arn:${AWS::Partition}:s3:::aws-cloudtrail-logs-${AWS::AccountId}-*/*"
 
           - Sid: MetricsAndIdentity
             Effect: Allow

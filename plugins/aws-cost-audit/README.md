@@ -1,15 +1,38 @@
 # aws-cost-audit
 
-Find money you are spending on nothing.
+Find money you are spending on nothing, then find out which job spent it.
 
 ```
 /plugin install aws-cost-audit@grimoire
 /aws-cost-audit:cost-audit [profile]
+/aws-cost-audit:glue-cost-analysis [profile]
+/aws-cost-audit:sagemaker-cost-analysis [period]
 ```
 
-The skill confirms which account it is pointed at before spending anything, runs the
-sweeps, checks each finding against its innocent explanation, and writes a report ranked
-by estimated monthly saving.
+**`cost-audit`** confirms which account it is pointed at before spending anything, runs
+the sweeps, checks each finding against its innocent explanation, and writes a report
+ranked by estimated monthly saving.
+
+The other two start where Cost Explorer stops. "AWS Glue went up $1,108" is a fact, not a
+finding; both deep dives push through to the thing you can actually change, and prove the
+answer reconciles against the bill.
+
+**`glue-cost-analysis`** attributes billed DPU-hours to individual jobs, reports the
+coverage it achieved rather than hiding it, and — where jobs were deleted inside the
+period and took their run history with them — recovers their runs from CloudTrail and
+CloudWatch Logs. Output is one self-contained HTML file: reconciliation, findings, a full
+job inventory, and a page per job with its run history, triggers, config and errors.
+
+**`sagemaker-cost-analysis`** attributes Studio spend to individual spaces, their human
+owners, each day, and the notebooks that actually ran — weighted by real cell executions
+and kernel time, with the weighting basis recorded per row so a soft number is visibly
+soft. Output is one self-contained, filterable HTML dashboard.
+
+Each deep dive ships a **deidentified example of its own output** at
+`skills/<skill>/references/example-report.html`: a real dashboard with every account,
+job, person, bucket, notebook path and error message replaced by a neutral one. Names
+built only from generic infrastructure words survive as they are, because they name
+nobody. Open one first — it is quicker than reading this.
 
 ## Permissions: use a least-privilege role
 
@@ -27,13 +50,13 @@ The stack outputs a ready-made `[profile cost-audit]` block for `~/.aws/config`.
 organization, deploy it as a StackSet across member accounts and audit each by profile.
 
 Rather attach the permissions to something that already exists? `iam/cost-audit-policy.json`
-is the same 20 actions as a standalone document.
+is the same 39 actions as a standalone document.
 
 **Why a role and not access keys.** Static IAM user keys do not expire and are the most
 commonly leaked AWS credential — committed to repos, left in shell history, pasted into
 CI settings. An IAM user also usually carries far more rights than this audit needs, so
 a read-only audit ends up running as a principal that could delete production. An assumed
-role hands out short-lived credentials scoped to exactly these 20 read-only actions, and
+role hands out short-lived credentials scoped to exactly these 39 read-only actions, and
 access is revoked by editing one trust policy rather than rotating keys everywhere.
 
 If you have already run audits with broader credentials, nothing was damaged — the
@@ -46,7 +69,7 @@ static and used from a shared machine.
 python3 scripts/preflight.py --profile you
 ```
 
-Reports which of the 20 actions your credentials actually hold, and flags when you are
+Reports which of the 39 actions your credentials actually hold, and flags when you are
 authenticating as an IAM user or root rather than an assumed role. Exits non-zero if
 anything is denied, so it works as a gate. Free by default — add
 `--include-cost-explorer` to probe the four `ce:Get*` actions too, which bills about
@@ -57,9 +80,16 @@ class of finding, and a report with an unannounced hole in it is worse than no r
 
 ## Read-only, by construction
 
-Every AWS call is a `get_*`, `describe_*`, or `list_*`. Nothing here creates, changes,
-tags, or removes a resource. CI greps for mutating boto3 calls and fails the build if one
-appears, so this stays true as the plugin grows.
+Every AWS call is a `get_*`, `describe_*`, `list_*`, `lookup_*`, or `search_*`. Nothing
+here creates, changes, tags, or removes a resource. CI greps for mutating calls and fails
+the build if one appears — once for boto3 method names, and once for the `aws` CLI
+operations the two deep-dive scripts shell out to, since a grep for boto3 would not see
+those. So this stays true as the plugin grows.
+
+One grant does reach object contents, and only that one: `s3:GetObject` and
+`s3:ListBucket`, scoped by bucket name to the Studio notebook mirror the SageMaker deep
+dive profiles and the CloudTrail archive the Glue reconstruction reads. The cost audit
+itself never opens an object.
 
 The report hands you the `delete-volume` and `release-address` commands. Running them is
 your decision, deliberately kept as a separate step outside this skill.
@@ -71,10 +101,17 @@ Responses are cached to local disk (`--cache-ttl`, default 6 hours), so re-runni
 you read the report costs nothing. The resource sweeps use EC2, S3, and CloudWatch, which
 are free.
 
+Two other things the deep dives can spend. CloudWatch Logs Insights, which the SageMaker
+attribution uses for occupancy, bills per GB scanned — small for a three-month window,
+worth knowing about for a twelve-month one. And `glue-cost-analysis --archive-bucket`
+reads the CloudTrail S3 archive with S3 Select, a few cents of scan; it is opt-in and
+only needed for windows wider than CloudTrail's 90-day event history.
+
 ## Scripts
 
-Usable directly, without the skill. All take `--profile`, `--region`, `--json`,
-`--no-cache`, and `--cache-ttl`.
+Usable directly, without the skill. All take `--profile` and `--region`. The four sweep
+scripts share `--json`, `--no-cache` and `--cache-ttl`; the two deep dives take `--start`,
+`--end` and `--out` instead, since their output is a dashboard rather than a table.
 
 ### `preflight.py`
 
@@ -116,6 +153,45 @@ connections over `--idle-days`.
 `--all-regions` is slower and worth it. Forgotten resources hide in regions nobody looks
 at.
 
+### `glue_cost_report.py`
+
+```
+glue_cost_report.py --profile you --out glue.html
+glue_cost_report.py --profile you --start 2026-01-01 --end 2026-04-01 --reconstruct
+```
+
+Reconciles billed Glue DPU-hours against every run `GetJobRuns` returns, per job, and
+writes the dashboard. Defaults to the last 90 complete days, which is also how far back
+CloudTrail Event history reaches.
+
+Read the coverage it prints before anything else. At or above 90%, you are done. Below
+it, jobs were deleted inside the period — their cost stays on the bill while their runs
+vanish from the API — and `--reconstruct` rebuilds them from CloudTrail and CloudWatch
+Logs. Reconstructed runs are labelled `ESTIMATED`, never `SUCCEEDED`: CloudTrail records
+that a run started and was billed, not how it ended.
+
+Coverage above 100% on any day is a bug, not rounding. The script says so rather than
+clamping it.
+
+### `sagemaker_cost_deepdive.py`
+
+```
+sagemaker_cost_deepdive.py --profile you --months 3
+sagemaker_cost_deepdive.py --profile you --start 2026-06-01 --end 2026-09-01 --no-code
+```
+
+Attributes Studio spend to spaces, owners, days and notebooks. Dollars are always shares
+of the billed amount, never `hours × rate`, so every total reconciles to the bill by
+construction; the hours figure is reported separately as the method's error bar and is
+never tuned to 100%.
+
+Two numbers, kept apart, and the skill insists on reporting them in this order: priced
+coverage (the share of billed hours placed onto a space, target ≥ 98%) and observed over
+billed hours (the error bar, which lands around 103% for explainable reasons).
+
+Needs `datazone:SearchUserProfiles` to turn Studio's user GUIDs into people. Without it
+the dashboard still works and owners show as UUIDs.
+
 ### `s3_storage.py`
 
 ```
@@ -148,9 +224,21 @@ load balancer with no healthy targets may front an autoscaling group at zero. An
 database may be a deliberate warm standby. An unattached volume may be a backup taken
 days before a planned restore.
 
+## Sharing a dashboard
+
+These dashboards embed everything: job names, notebook paths, people, table names, the
+text of failed runs. Treat one as confidential until you have gone through it: before it
+leaves the account, replace every account id, job, person, bucket, notebook path and table
+name with a neutral word, and cut each error message back to its exception class — an error
+string can carry a table name, a SQL fragment or a row of the data itself.
+
+Be suspicious of names that look harmless. A notebook called `glm_churn.ipynb` contains
+no proper noun and still says what you model and who for. The committed examples were
+prepared this way, and are worth a look as a reference for how far it has to go.
+
 ## Requirements
 
-`boto3`, and credentials holding the 20 read-only actions in
+`boto3`, and credentials holding the 39 read-only actions in
 `iam/cost-audit-policy.json`. Deploy `iam/cost-audit-role.yaml` to get exactly those and
 nothing else; `preflight.py` tells you what you are missing.
 

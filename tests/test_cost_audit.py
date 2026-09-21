@@ -534,9 +534,18 @@ def test_policy_matches_code():
         )
     check("template matches the policy", sorted(templated ^ granted), [])
 
-    check_true("every action is a read", all(
-        a.split(":")[1].startswith(("Get", "Describe", "List")) for a in granted
-    ), sorted(a for a in granted if not a.split(":")[1].startswith(("Get", "Describe", "List"))))
+    # Read verbs, plus the two AWS uses for reads that are not called Get: CloudTrail
+    # LookupEvents and DataZone SearchUserProfiles. logs:StartQuery is the one action
+    # whose name suggests otherwise -- it starts a Logs Insights query and returns an
+    # id, creating nothing an account owner can see -- so it is allowed by name rather
+    # than by prefix, which keeps the next exception a deliberate decision.
+    READ_PREFIXES = ("Get", "Describe", "List", "Lookup", "Search")
+    ALLOWED_BY_NAME = {"logs:StartQuery"}
+    unread = sorted(
+        a for a in granted
+        if a not in ALLOWED_BY_NAME and not a.split(":")[1].startswith(READ_PREFIXES)
+    )
+    check_true("every action is a read", not unread, unread)
 
 
 def main():

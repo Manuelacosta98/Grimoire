@@ -41,6 +41,18 @@ jobs:
             exit 1
           fi
 
+      # The guard above only knows boto3 method names. The two deep-dive scripts reach
+      # AWS through the `aws` CLI instead, so a mutating call there would look like a
+      # plain string: ["glue", "delete-job"]. `select-object-content` is a read and is
+      # deliberately not in this verb list; `start-query` is not either, and if one ever
+      # appears it should be argued for rather than waved through.
+      - name: Cost-audit scripts must stay read-only through the CLI too
+        run: |
+          if grep -rnE '"(create|delete|put|update|modify|terminate|attach|detach|tag|untag|register|deregister|associate|disassociate|import|copy|restore|reboot|revoke|remove|start|stop|run|enable|disable|cancel|invoke|execute)-[a-z0-9-]+"' plugins/aws-cost-audit/scripts/; then
+            echo "::error::Mutating aws CLI operation found. This plugin is read-only by construction."
+            exit 1
+          fi
+
       # A skill that points at a file which no longer exists fails silently at runtime.
       - name: Skill file references must resolve
         run: |

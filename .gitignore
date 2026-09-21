@@ -1,3 +1,14 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+
+# Real reports. The deep-dive scripts write these into the working directory, and
+# they carry every job, notebook, person and error message in the account. Only the
+# deidentified examples under plugins/*/skills/*/references/ belong in the repo.
+glue-cost-*.html
+sagemaker_cost_deepdive_*.html
+.sm_cost_cache/
+
+# Somewhere to put real dashboards. The patterns above only catch the scripts'
+# default filenames; --out anything.html would sail straight past them.
+reports/

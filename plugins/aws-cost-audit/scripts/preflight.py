@@ -22,6 +22,7 @@ Examples
 """
 
 import sys
+import time
 from datetime import datetime
 
 import _common as c
@@ -182,6 +183,86 @@ def build_probes(session, region, account, include_ce):
         probes.append(
             Probe("elbv2:DescribeTargetHealth", None, needs="at least one target group")
         )
+
+    # ---------------------------------------------------------------- deep dives
+    # The glue-cost-analysis and sagemaker-cost-analysis skills need more than the
+    # sweep does. Every probe below is free and aims at a name that does not exist:
+    # a "no such job" answer proves the call was authorised, and costs nothing. The
+    # exception is Logs Insights, where StartQuery against a missing log group is
+    # rejected before any data is scanned.
+    absent = "grimoire-preflight-probe"
+    absent_group = "/grimoire/preflight-probe"
+    absent_domain = "dzd_grimoirepreflight"
+
+    def client(service, region_name=region):
+        """A client, or None when botocore in this environment has never heard of it."""
+        try:
+            return session.client(service, region_name=region_name)
+        except Exception:
+            return None
+
+    deep = [
+        ("glue", [
+            ("glue:GetJobs", lambda gl: gl.get_jobs(MaxResults=1)),
+            ("glue:GetJobRuns", lambda gl: gl.get_job_runs(JobName=absent, MaxResults=1)),
+            ("glue:ListTriggers", lambda gl: gl.list_triggers(MaxResults=1)),
+            ("glue:GetTrigger", lambda gl: gl.get_trigger(Name=absent)),
+        ]),
+        ("sagemaker", [
+            ("sagemaker:ListDomains", lambda sm: sm.list_domains(MaxResults=1)),
+            ("sagemaker:ListSpaces", lambda sm: sm.list_spaces(MaxResults=1)),
+            ("sagemaker:ListUserProfiles", lambda sm: sm.list_user_profiles(MaxResults=1)),
+        ]),
+        ("datazone", [
+            ("datazone:ListDomains", lambda dz: dz.list_domains(maxResults=1)),
+            ("datazone:ListProjects",
+             lambda dz: dz.list_projects(domainIdentifier=absent_domain, maxResults=1)),
+            ("datazone:SearchUserProfiles",
+             lambda dz: dz.search_user_profiles(
+                 domainIdentifier=absent_domain, userType="DATAZONE_USER", maxResults=1)),
+        ]),
+        ("cloudtrail", [
+            ("cloudtrail:DescribeTrails", lambda ct: ct.describe_trails()),
+            ("cloudtrail:ListEventDataStores", lambda ct: ct.list_event_data_stores(MaxResults=1)),
+            ("cloudtrail:LookupEvents", lambda ct: ct.lookup_events(MaxResults=1)),
+        ]),
+        ("logs", [
+            ("logs:DescribeLogGroups", lambda lg: lg.describe_log_groups(limit=1)),
+            ("logs:DescribeLogStreams",
+             lambda lg: lg.describe_log_streams(logGroupName=absent_group, limit=1)),
+            ("logs:StartQuery",
+             lambda lg: lg.start_query(
+                 logGroupName=absent_group,
+                 startTime=int(time.time()) - 300,
+                 endTime=int(time.time()),
+                 queryString="fields @timestamp | limit 1")),
+            ("logs:GetQueryResults",
+             lambda lg: lg.get_query_results(
+                 queryId="00000000-0000-0000-0000-000000000000")),
+        ]),
+    ]
+
+    for service, actions in deep:
+        handle = client(service)
+        for action, call in actions:
+            if handle is None:
+                probes.append(Probe(action, None, needs="a boto3 that knows %s" % service))
+            else:
+                probes.append(Probe(action, (lambda fn=call, h=handle: fn(h))))
+
+    # Object reads are the one grant that reaches bucket contents. Probing them needs
+    # a real bucket: against a name that does not exist S3 answers NoSuchBucket to
+    # everyone, which proves nothing about permissions.
+    if bucket:
+        probes.append(
+            Probe("s3:ListBucket", lambda: s3.list_objects_v2(Bucket=bucket, MaxKeys=1))
+        )
+        probes.append(
+            Probe("s3:GetObject", lambda: s3.get_object(Bucket=bucket, Key=absent))
+        )
+    else:
+        probes.append(Probe("s3:ListBucket", None, needs="at least one S3 bucket"))
+        probes.append(Probe("s3:GetObject", None, needs="at least one S3 bucket"))
 
     ce_probes = [
         Probe(

@@ -1,23 +1,29 @@
 {
   "name": "aws-cost-audit",
-  "version": "0.2.0",
-  "description": "Audit an AWS account for wasted spend. Pulls Cost Explorer trends, sweeps for idle and orphaned resources, analyzes S3 storage footprint, and writes a report ranking findings by estimated monthly savings with the evidence and remediation command for each. Ships a least-privilege IAM role and a preflight permission check. Every AWS call is read-only.",
+  "version": "0.3.0",
+  "description": "Audit an AWS account for wasted spend, then go deeper on the two services that usually hide it. The sweep pulls Cost Explorer trends, finds idle and orphaned resources and S3 lifecycle gaps; the Glue deep dive attributes DPU-hours to individual jobs and reconciles them against the bill; the SageMaker deep dive attributes Studio spend to spaces, their owners and the notebooks that ran. Each writes a report or a self-contained HTML dashboard, and ships a deidentified example of one. Least-privilege IAM role included. Every AWS call is read-only.",
   "author": {
     "name": "Manuel Acosta"
   },
   "keywords": [
+    "attribution",
     "audit",
     "aws",
     "cloudformation",
     "cost",
     "cost-explorer",
+    "dpu",
     "ebs",
     "ec2",
+    "etl",
     "finops",
+    "glue",
     "iam",
     "least-privilege",
+    "notebook",
     "optimization",
     "s3",
+    "sagemaker",
     "savings"
   ],
   "license": "MIT"

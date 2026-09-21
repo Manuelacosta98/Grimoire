@@ -8,12 +8,13 @@ A spellbook of AI skills and agents, forged on live AWS infrastructure. Free to 
 
 A [Claude Code](https://claude.com/claude-code) plugin marketplace. Two plugins so far:
 one that writes the engineering documents nobody wants to start from a blank page, one
-that audits an AWS account for wasted money.
+that audits an AWS account for wasted money and then goes deeper on the two services
+that usually hide it.
 
 ## Install
 
 ```
-/plugin marketplace add Pompelo/Grimoire
+/plugin marketplace add Manuelacosta98/Grimoire
 /plugin install engineering-docs@grimoire
 /plugin install aws-cost-audit@grimoire
 ```
@@ -54,36 +55,52 @@ that gets skimmed once:
 ### `aws-cost-audit`
 
 Finds money you are spending on nothing, and writes it up ranked by what you would save.
+Then two deep dives for the services where "Cost Explorer says $4,000 of Glue" is a fact
+rather than a finding.
 
-```
-/aws-cost-audit:cost-audit [profile name]
-```
+| Skill | Invoke | Produces |
+|---|---|---|
+| Cost audit | `/aws-cost-audit:cost-audit [profile]` | a Markdown report ranked by estimated monthly saving |
+| Glue cost analysis | `/aws-cost-audit:glue-cost-analysis [profile]` | a self-contained HTML dashboard attributing DPU-hours to individual jobs |
+| SageMaker cost analysis | `/aws-cost-audit:sagemaker-cost-analysis [period]` | a self-contained HTML dashboard attributing Studio spend to spaces, owners and notebooks |
 
-Three scripts underneath, usable on their own:
+Each deep dive ships a **deidentified example of its own output** under
+`skills/<skill>/references/example-report.html` — a real dashboard with every account,
+job, person, path and error message replaced by a neutral one. A name built only from
+generic infrastructure words — `adhoc-snapshot-loader-job` — survives as it is, because it
+names nobody. Open one before you run anything; it is the fastest way to see what you are
+about to get.
+
+The scripts underneath, usable on their own:
 
 | Script | What it finds |
 |---|---|
-| `preflight.py` | Which of the 20 required IAM actions you actually hold, and whether you are using a role or static keys |
+| `preflight.py` | Which of the 39 required IAM actions you actually hold, and whether you are using a role or static keys |
 | `cost_explorer.py` | Monthly spend trend, breakdown by service or account or tag, biggest movers, AWS's own rightsizing and Savings Plans advice |
 | `idle_resources.py` | Unattached EBS volumes, unassociated Elastic IPs, stopped instances still billing for storage, stale snapshots, idle NAT gateways, load balancers with no healthy targets, databases with no connections |
 | `s3_storage.py` | Per-bucket size and storage-class mix, buckets with no lifecycle policy, versioning with no expiry, missing multipart-abort rules |
+| `glue_cost_report.py` | Billed DPU-hours reconciled against every run, per job — including jobs deleted inside the period, recovered from CloudTrail and CloudWatch Logs |
+| `sagemaker_cost_deepdive.py` | Studio spend per space, per owner, per day and per notebook, weighted by real cell executions and kernel time |
 
 ```
 python3 plugins/aws-cost-audit/scripts/preflight.py --profile you
 python3 plugins/aws-cost-audit/scripts/cost_explorer.py --profile you --months 6
 python3 plugins/aws-cost-audit/scripts/idle_resources.py --profile you --all-regions
 python3 plugins/aws-cost-audit/scripts/s3_storage.py --profile you --min-gb 10
+python3 plugins/aws-cost-audit/scripts/glue_cost_report.py --profile you --out glue.html
+python3 plugins/aws-cost-audit/scripts/sagemaker_cost_deepdive.py --profile you --months 3
 ```
 
-Every script takes `--profile`, `--region`, and `--json`.
+Every script takes `--profile` and `--region`; the four sweep scripts also take `--json`.
 
 #### Two things to know before you run it
 
-**It is read-only, by construction.** Every AWS call is a `get_*`, `describe_*`, or
-`list_*`. Nothing creates, changes, tags, or removes a resource. CI fails the build if a
-mutating boto3 call appears anywhere in that directory, so this stays true. The report
-hands you the `delete-volume` commands; running them is your decision, deliberately kept
-as a separate step.
+**It is read-only, by construction.** Every AWS call is a `get_*`, `describe_*`, `list_*`,
+`lookup_*`, or `search_*`. Nothing creates, changes, tags, or removes a resource. CI fails
+the build if a mutating call appears anywhere in that directory — one guard for boto3
+method names, a second for the `aws` CLI operations the two deep-dive scripts shell out
+to. The report hands you the `delete-volume` commands; running them is your decision,
+deliberately kept as a separate step.
 
 **Cost Explorer bills about $0.01 per API request.** An audit makes a handful — cents —
 but it is your account, so you should know before rather than after. Responses are cached
@@ -98,12 +115,12 @@ waste. A load balancer with no healthy targets might front an autoscaling group 
 
 **Permissions are least-privilege and shipped with the plugin.**
 `plugins/aws-cost-audit/iam/cost-audit-role.yaml` is a CloudFormation template creating a
-role with exactly the 20 read-only actions the scripts call — verified against the code
+role with exactly the 39 read-only actions the scripts call — verified against the code
 in CI, so the policy cannot drift from what the tool needs. Prefer assuming that role
 over static IAM user keys: short-lived credentials scoped to one read-only job, revocable
 by editing a trust policy.
 
-`scripts/preflight.py` reports which of the 20 actions your credentials hold and flags
+`scripts/preflight.py` reports which of the 39 actions your credentials hold and flags
 when you are running as an IAM user or root rather than an assumed role. Missing
 permissions produce a warning and a skipped check rather than a failed run.
 
@@ -115,6 +132,7 @@ assets/generate_art.py            regenerates the logo and banner at any scale
 plugins/<name>/
   .claude-plugin/plugin.json      that plugin's manifest
   skills/<name>/SKILL.md          the nesting matters
+  skills/<name>/references/       templates, method notes, example output
   scripts/                        helper executables
 tests/test_cost_audit.py          finding logic, against synthetic AWS responses
 .github/workflows/validate.yml    official validation + guards, on every PR
@@ -132,21 +150,28 @@ claude plugin validate plugins/aws-cost-audit --strict
 
 It does not recurse, so the marketplace and each plugin get checked separately. It needs
 no credentials and no network. CI installs it with
-`npm install -g @anthropic-ai/claude-code` and runs the same commands, plus two `grep`
-guards for the things no general validator can know about this repo: that the cost-audit
-scripts have stayed read-only, and that every `${CLAUDE_PLUGIN_ROOT}` path a skill
-references still exists.
+`npm install -g @anthropic-ai/claude-code` and runs the same commands, plus `grep` guards
+for the things no general validator can know about this repo: that the scripts have
+stayed read-only through boto3 *and* through the `aws` CLI, that every
+`${CLAUDE_PLUGIN_ROOT}` path a skill references still exists, and that the IAM policy,
+the CloudFormation template and the actions the code actually names are the same list.
 
-Then the tests:
+Then the test:
 
 ```
 python3 -m pip install boto3
 python3 tests/test_cost_audit.py
 ```
 
-They feed the cost-audit analysis functions fabricated AWS responses, because the scripts
+It feeds the cost-audit analysis functions fabricated AWS responses, because the scripts
 are read-only and their finding paths cannot be exercised against a real account unless
 that account happens to be wasteful.
+
+One rule no check enforces: the example dashboards under `skills/*/references/` are real
+reports with every identifier replaced, and they have to stay that way. If you add or
+update one, replace every account, job, person, bucket, notebook path and table name by
+hand, and cut error messages back to their exception class — an error string can carry a
+row of the data itself.
 
 The thing worth understanding is versions. **When you change a plugin, bump the version in
 both `plugins/<name>/.claude-plugin/plugin.json` and its entry in

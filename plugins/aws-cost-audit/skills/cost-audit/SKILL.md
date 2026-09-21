@@ -66,8 +66,10 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.py" --profile <PROFILE> --regio
 Report what it says. A denied action disables a specific check, and it is better to know
 that now than to hand over a report with a silent hole in it. To grant exactly what is
 missing, point them at `${CLAUDE_PLUGIN_ROOT}/iam/cost-audit-role.yaml` (CloudFormation,
-creates a role) or `${CLAUDE_PLUGIN_ROOT}/iam/cost-audit-policy.json` (the 20 actions, to
-attach directly).
+creates a role) or `${CLAUDE_PLUGIN_ROOT}/iam/cost-audit-policy.json` (every action the
+plugin uses, to attach directly). Both cover the two deep-dive skills as well as this
+one, so preflight reports on actions this audit never calls; a denial there costs you
+`/aws-cost-audit:glue-cost-analysis`, not the sweep.
 
 **3. Prefer an assumed role over static keys.** If preflight reports `user` or `root`
 credentials rather than `role`, say so once, plainly, and offer the fix:
@@ -100,8 +102,8 @@ skips its four Cost Explorer probes unless asked, for the same reason.
 
 ## The scripts
 
-All four live at `${CLAUDE_PLUGIN_ROOT}/scripts/` and share `--profile`, `--region`,
-`--json`, `--no-cache`, and `--cache-ttl`. **Every AWS call they make is read-only** —
+The four this skill uses live at `${CLAUDE_PLUGIN_ROOT}/scripts/` and share `--profile`,
+`--region`, `--json`, `--no-cache`, and `--cache-ttl`. **Every AWS call they make is read-only** —
 no script creates, changes, tags, or removes anything. Say so if the user hesitates.
 
 Run them with `--json` when you want to reason over the numbers, without it when you want
