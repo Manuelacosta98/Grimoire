@@ -16,7 +16,7 @@ user-invocable: true
 
 ## Before anything else
 
-The three rules in `../cost-audit/SKILL.md` apply here unchanged, and for the same reasons:
+Three rules, in this order, before any AWS call:
 
 1. **Ask which AWS profile to use, first.** `aws configure list-profiles`, then `AskUserQuestion`
    with the real names. Never fall back to the default profile silently.
@@ -97,8 +97,8 @@ Invoke when the user asks any of:
 - "make a Glue cost dashboard"
 
 Do **not** invoke for a Glue bill that is flat and already understood. This is a multi-step
-investigation, not a default section of a cost report. For the whole-account sweep, use
-`/aws-cost-audit:cost-audit`.
+investigation, not a default section of a cost report. For a period overview across every
+service, use `/aws-cost-audit:cost-report`.
 
 ## Required IAM permissions
 

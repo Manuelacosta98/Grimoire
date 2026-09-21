@@ -31,7 +31,7 @@ and produces a filterable HTML dashboard.
 
 ## Before anything else
 
-The three rules in `../cost-audit/SKILL.md` apply here unchanged, and for the same reasons:
+Three rules, in this order, before any AWS call:
 
 1. **Ask which AWS profile to use, first.** `aws configure list-profiles`, then `AskUserQuestion`
    with the real names. Never fall back to the default profile silently. Offer the payer profile

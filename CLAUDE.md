@@ -94,6 +94,12 @@ Clearing only one of the two does nothing.
 - Keep the SKILL.md body to roughly 1,500–2,000 words. Section structure and templates
   belong in `references/`, loaded only when needed. Do not duplicate content between the
   body and a reference file — put it in one of them.
+- **A reference two skills both need lives in one of them and is read across.**
+  `cost-report` points at
+  `${CLAUDE_PLUGIN_ROOT}/skills/glue-cost-analysis/references/service-deep-dive.md` rather
+  than shipping a second copy. `CLAUDE_PLUGIN_ROOT` is the plugin root, so this resolves,
+  and CI checks that it does. Two copies of an attribution method drift, and the drift is
+  invisible until one of them produces a wrong number.
 - The `description` is what decides whether the skill triggers at all. Write it in third
   person and include the phrases a user would really say, not a summary of the feature.
 - Reference bundled files as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.py`. Note that
@@ -119,6 +125,13 @@ read operations deliberately fall outside its verb list: `select-object-content`
 the trail-archive scan uses, and `start-query`, which starts a Logs Insights query. If
 either ever appears as a CLI string, argue for it rather than widening the allowlist
 quietly.
+
+**`cost-report` has no scripts, so a third guard covers its prose.** That skill tells the
+model to call Cost Explorer and write its own inline build script, which means the read-only
+promise lives in the SKILL.md rather than in any file the first two guards read. Both
+patterns therefore also run over `plugins/aws-cost-audit/skills/**/*.md`. Markdown only —
+the example dashboards are text-heavy HTML that would match on embedded data, and the
+example report is a binary `.docx`.
 
 This is a promise made in the README and in the skill, to people who will point this at
 production accounts. The report tells the user what to delete; the user does the deleting.
@@ -174,11 +187,19 @@ security incident.
 
 ### Example reports must name nobody
 
-The two deep-dive skills each ship `references/example-report.html`: a real dashboard with
-every identifying word — account, job, person, space, bucket, notebook path, table name,
-error message — replaced by a neutral one. Nothing here enforces that; it is a rule, so hold
-to it. Never commit a report that has not had every identifier replaced, and never paste a
-raw dashboard in "just to look at the numbers".
+Three skills ship an example of their own output: `references/example-report.html` for the
+two deep dives, `references/example-report.docx` for `cost-report`. Each is a real artifact
+with every identifying word — account, job, cluster, person, space, bucket, notebook path,
+table name, error message — replaced by a neutral one. Nothing here enforces that; it is a
+rule, so hold to it. Never commit a report that has not had every identifier replaced, and
+never paste a raw dashboard in "just to look at the numbers".
+
+**A `.docx` or any other rendered example carries its identifiers in the figures too.** Text
+substitution on the document body leaves the chart axis labels intact, and a PNG is not
+greppable. Rename the source data and regenerate the figures, then read the file back — pull
+the text out of `word/document.xml`, assert no original token survives, and look at every
+embedded image. Numbers stay as they are: the point of a real example is that its figures
+reconcile with each other.
 
 Work name by name rather than by pattern: a name is safe only if every word in it describes
 infrastructure rather than a company, a person, a product or a line of business. That means

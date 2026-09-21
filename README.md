@@ -8,8 +8,8 @@ A spellbook of AI skills and agents, forged on live AWS infrastructure. Free to 
 
 A [Claude Code](https://claude.com/claude-code) plugin marketplace. Two plugins so far:
 one that writes the engineering documents nobody wants to start from a blank page, one
-that audits an AWS account for wasted money and then goes deeper on the two services
-that usually hide it.
+that works out where an AWS bill actually goes — down to the individual job, cluster and
+notebook — and writes it up for whoever has to act on it.
 
 ## Install
 
@@ -54,22 +54,21 @@ that gets skimmed once:
 
 ### `aws-cost-audit`
 
-Finds money you are spending on nothing, and writes it up ranked by what you would save.
-Then two deep dives for the services where "Cost Explorer says $4,000 of Glue" is a fact
-rather than a finding.
+Two deep dives for the services where "Cost Explorer says $4,000 of Glue" is a fact
+rather than a finding, and a report you can send to whoever decides.
 
 | Skill | Invoke | Produces |
 |---|---|---|
-| Cost audit | `/aws-cost-audit:cost-audit [profile]` | a Markdown report ranked by estimated monthly saving |
 | Glue cost analysis | `/aws-cost-audit:glue-cost-analysis [profile]` | a self-contained HTML dashboard attributing DPU-hours to individual jobs |
 | SageMaker cost analysis | `/aws-cost-audit:sagemaker-cost-analysis [period]` | a self-contained HTML dashboard attributing Studio spend to spaces, owners and notebooks |
+| Cost report | `/aws-cost-audit:cost-report [profile] [period]` | a `.docx` cost analysis report — per-service root causes, recommendations by horizon, live Cost Explorer links |
 
-Each deep dive ships a **deidentified example of its own output** under
-`skills/<skill>/references/example-report.html` — a real dashboard with every account,
-job, person, path and error message replaced by a neutral one. A name built only from
-generic infrastructure words — `adhoc-snapshot-loader-job` — survives as it is, because it
-names nobody. Open one before you run anything; it is the fastest way to see what you are
-about to get.
+Each skill ships a **deidentified example of its own output** under
+`skills/<skill>/references/` — a real dashboard or report with
+every account, job, cluster, person, path and error message replaced by a neutral one,
+figures included. A name built only from generic infrastructure words —
+`adhoc-snapshot-loader-job` — survives as it is, because it names nobody. Open one before
+you run anything; it is the fastest way to see what you are about to get.
 
 The scripts underneath, usable on their own:
 
@@ -99,19 +98,20 @@ Every script takes `--profile` and `--region`; the four sweep scripts also take 
 `lookup_*`, or `search_*`. Nothing creates, changes, tags, or removes a resource. CI fails
 the build if a mutating call appears anywhere in that directory — one guard for boto3
 method names, a second for the `aws` CLI operations the two deep-dive scripts shell out
-to. The report hands you the `delete-volume` commands; running them is your decision,
-deliberately kept as a separate step.
+to. `idle_resources.py` hands you the `delete-volume` commands; running them is your
+decision, deliberately kept as a separate step.
 
-**Cost Explorer bills about $0.01 per API request.** An audit makes a handful — cents —
+**Cost Explorer bills about $0.01 per API request.** A run makes a handful — cents —
 but it is your account, so you should know before rather than after. Responses are cached
 on local disk, so re-running while you read the report is free. The resource sweeps use
 EC2, S3, and CloudWatch, which are free.
 
 Savings figures are estimates from us-east-1 list prices, built for ranking findings
-against each other rather than forecasting a bill. The skill is explicit about the three
+against each other rather than forecasting a bill. The plugin README names the three
 places they mislead — incremental snapshots, storage-only RDS numbers, and unmeasurable
-versioning waste — and about checking the innocent explanation before calling something
-waste. A load balancer with no healthy targets might front an autoscaling group at zero.
+versioning waste — and insists on checking the innocent explanation before calling
+something waste. A load balancer with no healthy targets might front an autoscaling group
+at zero.
 
 **Permissions are least-privilege and shipped with the plugin.**
 `plugins/aws-cost-audit/iam/cost-audit-role.yaml` is a CloudFormation template creating a
@@ -163,15 +163,16 @@ python3 -m pip install boto3
 python3 tests/test_cost_audit.py
 ```
 
-It feeds the cost-audit analysis functions fabricated AWS responses, because the scripts
-are read-only and their finding paths cannot be exercised against a real account unless
-that account happens to be wasteful.
+It feeds the sweep scripts' analysis functions fabricated AWS responses, because the
+scripts are read-only and their finding paths cannot be exercised against a real account
+unless that account happens to be wasteful.
 
-One rule no check enforces: the example dashboards under `skills/*/references/` are real
-reports with every identifier replaced, and they have to stay that way. If you add or
-update one, replace every account, job, person, bucket, notebook path and table name by
-hand, and cut error messages back to their exception class — an error string can carry a
-row of the data itself.
+One rule no check enforces: the examples under `skills/*/references/` are real reports
+with every identifier replaced, and they have to stay that way. If you add or update one,
+replace every account, job, cluster, person, bucket, notebook path and table name by hand,
+cut error messages back to their exception class — an error string can carry a row of the
+data itself — and, where the example carries figures, regenerate them from the renamed
+data rather than editing the document text around them.
 
 The thing worth understanding is versions. **When you change a plugin, bump the version in
 both `plugins/<name>/.claude-plugin/plugin.json` and its entry in

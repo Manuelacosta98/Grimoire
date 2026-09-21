@@ -1,20 +1,17 @@
 # aws-cost-audit
 
-Find money you are spending on nothing, then find out which job spent it.
+Find out which job spent the money, then write it up for whoever has to sign off on
+fixing it.
 
 ```
 /plugin install aws-cost-audit@grimoire
-/aws-cost-audit:cost-audit [profile]
 /aws-cost-audit:glue-cost-analysis [profile]
 /aws-cost-audit:sagemaker-cost-analysis [period]
+/aws-cost-audit:cost-report [profile] [period]
 ```
 
-**`cost-audit`** confirms which account it is pointed at before spending anything, runs
-the sweeps, checks each finding against its innocent explanation, and writes a report
-ranked by estimated monthly saving.
-
-The other two start where Cost Explorer stops. "AWS Glue went up $1,108" is a fact, not a
-finding; both deep dives push through to the thing you can actually change, and prove the
+The two deep dives start where Cost Explorer stops. "AWS Glue went up $1,108" is a fact,
+not a finding; both push through to the thing you can actually change, and prove the
 answer reconciles against the bill.
 
 **`glue-cost-analysis`** attributes billed DPU-hours to individual jobs, reports the
@@ -28,15 +25,24 @@ owners, each day, and the notebooks that actually ran — weighted by real cell 
 and kernel time, with the weighting basis recorded per row so a soft number is visibly
 soft. Output is one self-contained, filterable HTML dashboard.
 
-Each deep dive ships a **deidentified example of its own output** at
-`skills/<skill>/references/example-report.html`: a real dashboard with every account,
-job, person, bucket, notebook path and error message replaced by a neutral one. Names
-built only from generic infrastructure words survive as they are, because they name
-nobody. Open one first — it is quicker than reading this.
+**`cost-report`** is the one you send to somebody. It turns a period of Cost Explorer data
+into a `.docx`: period trend, the services that actually matter in *this* account with a
+root cause each, what moved and why, recommendations split into 0–30 days, 1–3 months and
+3 months out, and an Evidence section of Cost Explorer links that open pre-filtered to the
+report period. It decides whether credits are even worth mentioning instead of cluttering
+the document with a $0.10 adjustment, and when one service dominates it opens a deep dive
+on that service rather than restating the number in a longer sentence.
+
+Each skill ships a **deidentified example of its own output** under
+`skills/<skill>/references/` — `example-report.html` for the two dashboards,
+`example-report.docx` for the report. Each is a real one with every account, job, cluster,
+person, bucket, notebook path and error message replaced by a neutral word, figures
+included. Names built only from generic infrastructure words survive as they are, because
+they name nobody. Open one first — it is quicker than reading this.
 
 ## Permissions: use a least-privilege role
 
-Deploy the role before your first audit rather than pointing broad credentials at it:
+Deploy the role before your first run rather than pointing broad credentials at it:
 
 ```
 aws cloudformation deploy \
@@ -75,7 +81,7 @@ anything is denied, so it works as a gate. Free by default — add
 `--include-cost-explorer` to probe the four `ce:Get*` actions too, which bills about
 $0.04.
 
-Knowing up front beats discovering mid-audit: a denied action silently disables a whole
+Knowing up front beats discovering mid-run: a denied action silently disables a whole
 class of finding, and a report with an unannounced hole in it is worse than no report.
 
 ## Read-only, by construction
@@ -88,15 +94,15 @@ those. So this stays true as the plugin grows.
 
 One grant does reach object contents, and only that one: `s3:GetObject` and
 `s3:ListBucket`, scoped by bucket name to the Studio notebook mirror the SageMaker deep
-dive profiles and the CloudTrail archive the Glue reconstruction reads. The cost audit
-itself never opens an object.
+dive profiles and the CloudTrail archive the Glue reconstruction reads. Nothing else here
+opens an object.
 
-The report hands you the `delete-volume` and `release-address` commands. Running them is
-your decision, deliberately kept as a separate step outside this skill.
+`idle_resources.py` hands you the `delete-volume` and `release-address` commands. Running
+them is your decision, deliberately kept as a separate step outside these skills.
 
 ## Cost Explorer is not free
 
-Each Cost Explorer API request bills roughly **$0.01**. A normal audit makes a handful.
+Each Cost Explorer API request bills roughly **$0.01**. A normal run makes a handful.
 Responses are cached to local disk (`--cache-ttl`, default 6 hours), so re-running while
 you read the report costs nothing. The resource sweeps use EC2, S3, and CloudWatch, which
 are free.
@@ -109,7 +115,7 @@ only needed for windows wider than CloudTrail's 90-day event history.
 
 ## Scripts
 
-Usable directly, without the skill. All take `--profile` and `--region`. The four sweep
+Usable directly, without a skill. All take `--profile` and `--region`. The four sweep
 scripts share `--json`, `--no-cache` and `--cache-ttl`; the two deep dives take `--start`,
 `--end` and `--out` instead, since their output is a dashboard rather than a table.
 
@@ -224,13 +230,14 @@ load balancer with no healthy targets may front an autoscaling group at zero. An
 database may be a deliberate warm standby. An unattached volume may be a backup taken
 days before a planned restore.
 
-## Sharing a dashboard
+## Sharing a dashboard or a report
 
-These dashboards embed everything: job names, notebook paths, people, table names, the
-text of failed runs. Treat one as confidential until you have gone through it: before it
-leaves the account, replace every account id, job, person, bucket, notebook path and table
-name with a neutral word, and cut each error message back to its exception class — an error
-string can carry a table name, a SQL fragment or a row of the data itself.
+Everything these skills produce embeds everything: account ids, job and cluster names,
+notebook paths, people, table names, the text of failed runs. Treat one as confidential
+until you have gone through it: before it leaves the account, replace every account id,
+job, cluster, person, bucket, notebook path and table name with a neutral word, and cut
+each error message back to its exception class — an error string can carry a table name, a
+SQL fragment or a row of the data itself.
 
 Be suspicious of names that look harmless. A notebook called `glm_churn.ipynb` contains
 no proper noun and still says what you model and who for. The committed examples were

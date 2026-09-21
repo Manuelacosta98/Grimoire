@@ -53,6 +53,20 @@ jobs:
             exit 1
           fi
 
+      # `cost-report` has no scripts of its own — it tells the model to write an inline
+      # build script and call Cost Explorer directly. For that skill the prose *is* the
+      # code, so both guards run over the skill markdown as well. Only .md: the shipped
+      # example dashboards are text-heavy HTML and the example report is a binary .docx.
+      - name: Skill instructions must stay read-only too
+        run: |
+          if grep -rnE --include='*.md' \
+               -e '\.[[:space:]]*(create|delete|put|modify|terminate|update|attach|detach|remove|revoke|associate|disassociate|reboot|restore|copy|import|register|deregister|tag|untag)_[a-z0-9_]+[[:space:]]*\(' \
+               -e '"(create|delete|put|update|modify|terminate|attach|detach|tag|untag|register|deregister|associate|disassociate|import|copy|restore|reboot|revoke|remove|start|stop|run|enable|disable|cancel|invoke|execute)-[a-z0-9-]+"' \
+               plugins/aws-cost-audit/skills/; then
+            echo "::error::A skill instructs a mutating AWS call. This plugin is read-only by construction."
+            exit 1
+          fi
+
       # A skill that points at a file which no longer exists fails silently at runtime.
       - name: Skill file references must resolve
         run: |
